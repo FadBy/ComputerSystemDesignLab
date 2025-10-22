@@ -55,6 +55,81 @@ static void MX_GPIO_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#define TICK_TIME 50
+#define LONG_PRESS_TIME 300
+
+int press_duration = 0;
+int is_pressed = 0;
+
+int counter = 0;
+
+int overcrowd = 0;
+void overcrowd_visual(){
+	if (counter == -1) {
+		counter = 3;
+		if (overcrowd > 0) {
+			overcrowd--;
+		}
+	}
+	else if (counter == 4) {
+		counter = 0;
+		overcrowd++;
+	}
+	else {
+		return;
+	}
+	if (overcrowd == 0) {
+		return;
+	}
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13 | GPIO_PIN_14, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13 | GPIO_PIN_14, GPIO_PIN_SET);
+	HAL_Delay(250);
+	HAL_GPIO_WritePin(GPIOD,GPIO_PIN_14, GPIO_PIN_RESET);
+	for(int i=0; i<overcrowd;i++){
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+		HAL_Delay(250);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+		HAL_Delay(250);
+	}
+	HAL_GPIO_WritePin(GPIOD,GPIO_PIN_13, GPIO_PIN_RESET);
+}
+
+int get_long_press() {
+	return press_duration >= 300 && !is_pressed;
+}
+
+int get_short_press() {
+	return press_duration > 0 && press_duration < 300 && !is_pressed;
+}
+
+void sync_button_state() {
+	int button_state = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15);
+
+	if (is_pressed) {
+		press_duration += TICK_TIME;
+	}
+	else {
+		press_duration = 0;
+	}
+
+	is_pressed = button_state;
+}
+
+void process_increment() {
+	counter++;
+}
+
+void process_decrement() {
+	counter--;
+}
+
+void display_counter() {
+	int small_bit = counter % 2;
+	int big_bit = (counter / 2) % 2;
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, small_bit ? GPIO_PIN_SET : GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, big_bit ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -94,10 +169,17 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  HAL_Delay(500);
-		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
-		HAL_Delay(500);
-		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
+	  sync_button_state();
+	  if (get_short_press()) {
+		  process_increment();
+		  overcrowd_visual();
+	  }
+	  if (get_long_press()) {
+		  process_decrement();
+		  overcrowd_visual();
+	  }
+	  display_counter();
+	  HAL_Delay(TICK_TIME);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -159,12 +241,19 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_15;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PD13 PD14 PD15 */
   GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
