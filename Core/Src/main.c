@@ -74,11 +74,15 @@ int is_pressed = 0;
 
 int interrupt_enable = 0;
 
-int uart6_receive_finished;
+int uart6_receive_finished =0;
 int uart6_transmit_ongoing;
 static uint8_t uart6_buf;
 
-
+int transmit_busy = 0;
+char transmit_buf[1024];
+uint8_t transmit_ptr = 0;
+uint8_t transmit_cur = 0;
+int t=0;
 HAL_StatusTypeDef uart6_start_receive_char_it() {
 	uart6_receive_finished =0;
 	return HAL_UART_Receive_IT(&huart6, &uart6_buf,1);
@@ -106,10 +110,14 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-	if(huart->Instance == USART6)
-	{
-		uart6_transmit_ongoing = 0;
-	}
+	if (transmit_ptr > transmit_cur) {
+			HAL_UART_Transmit_IT(&huart6, (uint8_t*) transmit_buf + transmit_cur, sizeof(char));
+			transmit_cur++;
+		} else {
+			transmit_ptr = 0;
+			transmit_cur = 0;
+			transmit_busy = 0;
+		}
 }
 
 int error_check(){
@@ -155,6 +163,7 @@ void process_input() {
 			if (is_equal_sign(current_char)) {
 				process_result(operator);
 				print_char(current_char);
+
 				if (!error_check()) {
 					return;
 				}
@@ -182,6 +191,7 @@ void switch_mode() {
 	reset_equation();
 	print_string("Mode switched", 13);
 	print_newline();
+	t=1;
 	interrupt_enable = interrupt_enable == 0 ? 1 : 0;
 }
 
@@ -225,7 +235,11 @@ void increase_number(char c, int* number) {
 
 void print_char(char c) {
 	if (interrupt_enable) {
-	  HAL_UART_Transmit_IT(&huart6, (uint8_t*) &c, sizeof(char));
+		if (!transmit_busy) {
+			HAL_UART_Transmit_IT(&huart6, (uint8_t*) &c, sizeof(char));
+			transmit_busy = 1;
+		}
+		else transmit_buf[transmit_ptr++] = c;
 	 } else {
 	  HAL_UART_Transmit(&huart6, (uint8_t *) &c, 1, 10);
 	 }
@@ -239,7 +253,9 @@ void print_result(int r) {
 
 void print_string(char* s, int len) {
     if (interrupt_enable) {
-    		print_char(s[0]);
+    	for(int i=0;i<len;i++){
+    		print_char(s[i]);
+    	}
     } else {
     	HAL_UART_Transmit(&huart6, (uint8_t *)s, len, 10);
     }
@@ -322,8 +338,6 @@ int main(void)
   char d[] = "Hello world\n";
   char c;
 
-  uart6_start_receive_char_it();
-
   while (1) {
 	  receive_button_state();
 	  if (get_press()) {
@@ -335,17 +349,24 @@ int main(void)
 	           process_input();
 	        }
 	     } else{
-	      if(uart6_try_get_receive_char((uint8_t *) &current_char ) )
-	    	  uart6_start_receive_char_it();
-	       if (input_received()) {
-	         process_input();
-	       }
-	        }
+	    	 if(t==1){
+		    	 uart6_start_receive_char_it();
+		    	 t=0;
+	    	 } else{
+			  if(uart6_try_get_receive_char((uint8_t *) &current_char ) )
+					 uart6_start_receive_char_it();
+			 }
+
+			if (input_received()) {
+			  process_input();
+			}
+
+	  }
 	  current_char = '\0';
 
-/* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-/* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
