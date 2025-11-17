@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "usart.h"
+#include "tim.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -56,249 +56,6 @@ void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-enum InputType {
-	FirstNumber,
-	SecondNumber
-};
-
-enum InputType current_input_type = FirstNumber;
-
-int first_number = -1;
-int second_number = -1;
-char operator;
-int result;
-char current_char;
-
-int press_duration = 0;
-int is_pressed = 0;
-
-int interrupt_enable = 0;
-
-int uart6_receive_finished =0;
-int uart6_transmit_ongoing;
-static uint8_t uart6_buf;
-
-int transmit_busy = 0;
-char transmit_buf[1024];
-uint8_t transmit_ptr = 0;
-uint8_t transmit_cur = 0;
-int t=0;
-HAL_StatusTypeDef uart6_start_receive_char_it() {
-	uart6_receive_finished =0;
-	return HAL_UART_Receive_IT(&huart6, &uart6_buf,1);
-}
-
-int uart6_try_get_receive_char(uint8_t *buf) {
-	if(uart6_receive_finished) {
-		*buf = uart6_buf;
-		return 1;
-	}
-	return 0;
-}
-
-HAL_StatusTypeDef uart6_transmit_it(uint8_t *buf, int len) {
-	while(uart6_transmit_ongoing);
-	uart6_transmit_ongoing = 1;
-	return HAL_UART_Transmit_IT(&huart6, buf, len);
-}
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	if(huart->Instance == USART6)
-	{
-		uart6_receive_finished = 1;
-	}
-}
-
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-	if (transmit_ptr > transmit_cur) {
-			HAL_UART_Transmit_IT(&huart6, (uint8_t*) transmit_buf + transmit_cur, sizeof(char));
-			transmit_cur++;
-		} else {
-			transmit_ptr = 0;
-			transmit_cur = 0;
-			transmit_busy = 0;
-		}
-}
-
-int error_check(){
-	if(first_number>=65536 || second_number>=65536 || result>=32768 || result<=-32768){
-		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
-		print_error();
-		HAL_Delay(250);
-		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
-		reset_equation();
-		return 0;
-	}
-	return 1;
-}
-
-short convert_char_to_short(char c) {
-	return c - '0';
-}
-
-int is_operator_sign(char c) {
-	return c == '+' || c == '-' || c == '/' || c == '*';
-}
-
-int is_equal_sign(char c) {
-	return c == '=';
-}
-
-void process_input() {
-	switch (current_input_type) {
-		case FirstNumber:
-			if (is_operator_sign(current_char) && first_number!=-1) {
-				process_operator_sign(current_char);
-				print_char(current_char);
-			}
-			else if (isdigit(current_char)) {
-				if (first_number < 10000) {
-					increase_number(current_char, &first_number);
-					print_char(current_char);
-				}
-			}
-			error_check();
-			break;
-		case SecondNumber:
-			if (is_equal_sign(current_char) && second_number!=-1) {
-				process_result(operator);
-				print_char(current_char);
-
-				if (!error_check()) {
-					return;
-				}
-				if (second_number == 0 && operator == '/') {
-					second_number = 99999;
-					error_check();
-					return;
-				}
-				print_result(result);
-				print_newline();
-				reset_equation();
-			}
-			else if (isdigit(current_char)) {
-				if (second_number < 10000) {
-					increase_number(current_char, &second_number);
-					print_char(current_char);
-				}
-			}
-			error_check();
-			break;
-	}
-}
-
-void switch_mode() {
-	reset_equation();
-	print_string("Mode switched", 13);
-	print_newline();
-	t=1;
-	interrupt_enable = interrupt_enable == 0 ? 1 : 0;
-}
-
-void process_operator_sign(char c) {
-	operator = c;
-	current_input_type = SecondNumber;
-}
-
-void process_result(char operator) {
-	switch (operator) {
-		case '+':
-			result = first_number + second_number;
-			break;
-		case '-':
-			result = first_number - second_number;
-			break;
-		case '*':
-			result = first_number * second_number;
-			break;
-		case '/':
-			result = first_number / second_number;
-			break;
-		default:
-			break;
-	}
-}
-
-void reset_equation() {
-	first_number = -1;
-	second_number = -1;
-	result = 0;
-	current_input_type = FirstNumber;
-	operator = '+';
-}
-
-void increase_number(char c, int* number) {
-	int digit = convert_char_to_short(c);
-	if(*number == -1){
-		*number = 0;
-	}
-	*number = *number * 10;
-	*number = *number + digit;
-}
-
-void print_char(char c) {
-	if (interrupt_enable) {
-		if (!transmit_busy) {
-			HAL_UART_Transmit_IT(&huart6, (uint8_t*) &c, sizeof(char));
-			transmit_busy = 1;
-		}
-		else transmit_buf[transmit_ptr++] = c;
-	 } else {
-	  HAL_UART_Transmit(&huart6, (uint8_t *) &c, 1, 10);
-	 }
-}
-
-void print_result(int r) {
-    char s[20];
-    int len = sprintf(s, "%d", r);
-    print_string(s, len);
-}
-
-void print_string(char* s, int len) {
-    if (interrupt_enable) {
-    	for(int i=0;i<len;i++){
-    		print_char(s[i]);
-    	}
-    } else {
-    	HAL_UART_Transmit(&huart6, (uint8_t *)s, len, 10);
-    }
-}
-
-void print_error() {
-	print_newline();
-	print_string("error", 5);
-	print_newline();
-}
-
-void print_newline() {
-	print_char('\n');
-}
-
-void receive_input() {
-	HAL_UART_Receive(&huart6, (uint8_t *) &current_char, 1, 1);
-}
-
-int input_received() {
-	return current_char != '\0';
-}
-
-int get_press() {
-	return press_duration > 0  && !is_pressed;
-}
-
-void receive_button_state() {
-	int button_state = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15);
-
-	if (is_pressed) {
-		press_duration += HAL_GetTick();
-	}
-	else {
-		press_duration = 0;
-	}
-
-	is_pressed = button_state;
-}
-
 /* USER CODE END 0 */
 
 /**
@@ -330,42 +87,24 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART6_UART_Init();
+  MX_TIM1_Init();
+  MX_TIM6_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+//  HAL_TIM_Base_Start_IT(&htim1);
+//  HAL_TIM_Base_Start_IT(&htim6);
 
-  char d[] = "Hello world\n";
-  char c;
+  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2);
 
-  while (1) {
-	  receive_button_state();
-	  if (get_press()) {
-		  switch_mode();
-	  }
-	  if(interrupt_enable==0){
-	      receive_input();
-	        if (input_received()) {
-	           process_input();
-	        }
-	     } else{
-	    	 if(t==1){
-		    	 uart6_start_receive_char_it();
-		    	 t=0;
-	    	 } else{
-			  if(uart6_try_get_receive_char((uint8_t *) &current_char ) )
-					 uart6_start_receive_char_it();
-			 }
-
-			if (input_received()) {
-			  process_input();
-			}
-
-	  }
-	  current_char = '\0';
+  while (1)
+  {
 
     /* USER CODE END WHILE */
 
@@ -386,16 +125,27 @@ void SystemClock_Config(void)
   /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 15;
+  RCC_OscInitStruct.PLL.PLLN = 216;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Activate the Over-Drive mode
+  */
+  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
   {
     Error_Handler();
   }
@@ -404,12 +154,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {
     Error_Handler();
   }
