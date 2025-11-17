@@ -63,8 +63,8 @@ enum InputType {
 
 enum InputType current_input_type = FirstNumber;
 
-int first_number = 0;
-int second_number = 0;
+int first_number = -1;
+int second_number = -1;
 char operator;
 int result;
 char current_char;
@@ -147,7 +147,7 @@ int is_equal_sign(char c) {
 void process_input() {
 	switch (current_input_type) {
 		case FirstNumber:
-			if (is_operator_sign(current_char)) {
+			if (is_operator_sign(current_char) && first_number!=-1) {
 				process_operator_sign(current_char);
 				print_char(current_char);
 			}
@@ -160,7 +160,7 @@ void process_input() {
 			error_check();
 			break;
 		case SecondNumber:
-			if (is_equal_sign(current_char)) {
+			if (is_equal_sign(current_char) && second_number!=-1) {
 				process_result(operator);
 				print_char(current_char);
 
@@ -220,8 +220,8 @@ void process_result(char operator) {
 }
 
 void reset_equation() {
-	first_number = 0;
-	second_number = 0;
+	first_number = -1;
+	second_number = -1;
 	result = 0;
 	current_input_type = FirstNumber;
 	operator = '+';
@@ -229,6 +229,9 @@ void reset_equation() {
 
 void increase_number(char c, int* number) {
 	int digit = convert_char_to_short(c);
+	if(*number == -1){
+		*number = 0;
+	}
 	*number = *number * 10;
 	*number = *number + digit;
 }
