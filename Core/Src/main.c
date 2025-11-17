@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usart.h"
+#include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -40,7 +42,6 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-UART_HandleTypeDef huart6;
 
 /* USER CODE BEGIN PV */
 
@@ -48,20 +49,12 @@ UART_HandleTypeDef huart6;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_USART6_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-//#define TICK_TIME 50
-//#define LONG_PRESS_TIME 300
-
-//int press_duration = 0;
-//int is_pressed = 0;
 
 enum InputType {
 	FirstNumber,
@@ -76,12 +69,63 @@ char operator;
 int result;
 char current_char;
 
-short convert_char_to_short(char c) {
-	return c - '0';
+int press_duration = 0;
+int is_pressed = 0;
+
+int interrupt_enable = 0;
+
+int uart6_receive_finished;
+int uart6_transmit_ongoing;
+static uint8_t uart6_buf;
+
+
+HAL_StatusTypeDef uart6_start_receive_char_it() {
+	uart6_receive_finished =0;
+	return HAL_UART_Receive_IT(&huart6, &uart6_buf,1);
 }
 
-void process_non_digit_error() {
-	// TODO turn on red led
+int uart6_try_get_receive_char(uint8_t *buf) {
+	if(uart6_receive_finished) {
+		*buf = uart6_buf;
+		return 1;
+	}
+	return 0;
+}
+
+HAL_StatusTypeDef uart6_transmit_it(uint8_t *buf, int len) {
+	while(uart6_transmit_ongoing);
+	uart6_transmit_ongoing = 1;
+	return HAL_UART_Transmit_IT(&huart6, buf, len);
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	if(huart->Instance == USART6)
+	{
+		uart6_receive_finished = 1;
+	}
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+	if(huart->Instance == USART6)
+	{
+		uart6_transmit_ongoing = 0;
+	}
+}
+
+int error_check(){
+	if(first_number>=65536 || second_number>=65536 || result>=32768 || result<=-32768){
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_SET);
+		print_error();
+		HAL_Delay(250);
+		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, GPIO_PIN_RESET);
+		reset_equation();
+		return 0;
+	}
+	return 1;
+}
+
+short convert_char_to_short(char c) {
+	return c - '0';
 }
 
 int is_operator_sign(char c) {
@@ -96,10 +140,8 @@ void process_input() {
 	switch (current_input_type) {
 		case FirstNumber:
 			if (is_operator_sign(current_char)) {
-				if (first_number > 0) {
-					process_operator_sign(current_char);
-					print_char(current_char);
-				}
+				process_operator_sign(current_char);
+				print_char(current_char);
 			}
 			else if (isdigit(current_char)) {
 				if (first_number < 10000) {
@@ -107,13 +149,23 @@ void process_input() {
 					print_char(current_char);
 				}
 			}
+			error_check();
 			break;
 		case SecondNumber:
 			if (is_equal_sign(current_char)) {
-				if (second_number > 0) {
-					print_char(current_char);
-					process_result(operator);
+				process_result(operator);
+				print_char(current_char);
+				if (!error_check()) {
+					return;
 				}
+				if (second_number == 0 && operator == '/') {
+					second_number = 99999;
+					error_check();
+					return;
+				}
+				print_result(result);
+				print_newline();
+				reset_equation();
 			}
 			else if (isdigit(current_char)) {
 				if (second_number < 10000) {
@@ -121,8 +173,16 @@ void process_input() {
 					print_char(current_char);
 				}
 			}
+			error_check();
 			break;
-	}	
+	}
+}
+
+void switch_mode() {
+	reset_equation();
+	print_string("Mode switched", 13);
+	print_newline();
+	interrupt_enable = interrupt_enable == 0 ? 1 : 0;
 }
 
 void process_operator_sign(char c) {
@@ -147,11 +207,14 @@ void process_result(char operator) {
 		default:
 			break;
 	}
+}
+
+void reset_equation() {
 	first_number = 0;
 	second_number = 0;
+	result = 0;
 	current_input_type = FirstNumber;
-	print_result(result);
-	print_newline();
+	operator = '+';
 }
 
 void increase_number(char c, int* number) {
@@ -161,13 +224,31 @@ void increase_number(char c, int* number) {
 }
 
 void print_char(char c) {
-	HAL_UART_Transmit(&huart6, (uint8_t *) &c, 1, 10);
+	if (interrupt_enable) {
+	  HAL_UART_Transmit_IT(&huart6, (uint8_t*) &c, sizeof(char));
+	 } else {
+	  HAL_UART_Transmit(&huart6, (uint8_t *) &c, 1, 10);
+	 }
 }
 
 void print_result(int r) {
     char s[20];
     int len = sprintf(s, "%d", r);
-    HAL_UART_Transmit(&huart6, (uint8_t *)s, len, 10);
+    print_string(s, len);
+}
+
+void print_string(char* s, int len) {
+    if (interrupt_enable) {
+    		print_char(s[0]);
+    } else {
+    	HAL_UART_Transmit(&huart6, (uint8_t *)s, len, 10);
+    }
+}
+
+void print_error() {
+	print_newline();
+	print_string("error", 5);
+	print_newline();
 }
 
 void print_newline() {
@@ -182,74 +263,22 @@ int input_received() {
 	return current_char != '\0';
 }
 
-//int counter = 0;
+int get_press() {
+	return press_duration > 0  && !is_pressed;
+}
 
-//int overcrowd = 0;
-//void overcrowd_visual(){
-//	if (counter == -1) {
-//		counter = 3;
-//		if (overcrowd > 0) {
-//			overcrowd--;
-//		}
-//	}
-//	else if (counter == 4) {
-//		counter = 0;
-//		overcrowd++;
-//	}
-//	else {
-//		return;
-//	}
-//	if (overcrowd == 0) {
-//		return;
-//	}
-//	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13 | GPIO_PIN_14, GPIO_PIN_RESET);
-//	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13 | GPIO_PIN_14, GPIO_PIN_SET);
-//	HAL_Delay(250);
-//	HAL_GPIO_WritePin(GPIOD,GPIO_PIN_14, GPIO_PIN_RESET);
-//	for(int i=0; i<overcrowd;i++){
-//		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
-//		HAL_Delay(250);
-//		HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
-//		HAL_Delay(250);
-//	}
-//	HAL_GPIO_WritePin(GPIOD,GPIO_PIN_13, GPIO_PIN_RESET);
-//}
-//
-//int get_long_press() {
-//	return press_duration >= 300 && !is_pressed;
-//}
-//
-//int get_short_press() {
-//	return press_duration > 0 && press_duration < 300 && !is_pressed;
-//}
-//
-//void sync_button_state() {
-//	int button_state = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15);
-//
-//	if (is_pressed) {
-//		press_duration += TICK_TIME;
-//	}
-//	else {
-//		press_duration = 0;
-//	}
-//
-//	is_pressed = button_state;
-//}
-//
-//void process_increment() {
-//	counter++;
-//}
-//
-//void process_decrement() {
-//	counter--;
-//}
-//
-//void display_counter() {
-//	int small_bit = counter % 2;
-//	int big_bit = (counter / 2) % 2;
-//	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, small_bit ? GPIO_PIN_SET : GPIO_PIN_RESET);
-//	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, big_bit ? GPIO_PIN_SET : GPIO_PIN_RESET);
-//}
+void receive_button_state() {
+	int button_state = !HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15);
+
+	if (is_pressed) {
+		press_duration += HAL_GetTick();
+	}
+	else {
+		press_duration = 0;
+	}
+
+	is_pressed = button_state;
+}
 
 /* USER CODE END 0 */
 
@@ -290,29 +319,33 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  while (1)
-  {
-	  receive_input();
-	  if (input_received()) {
-		  process_input();
-	  }
-	  current_char = '\0';
-//	  HAL_UART_Transmit(&huart6, (uint8_t *) s, sizeof(s), 10);
-//	  HAL_Delay(1000);
-//	  sync_button_state();
-//	  if (get_short_press()) {
-//		  process_increment();
-//		  overcrowd_visual();
-//	  }
-//	  if (get_long_press()) {
-//		  process_decrement();
-//		  overcrowd_visual();
-//	  }
-//	  display_counter();
-//	  HAL_Delay(TICK_TIME);
-    /* USER CODE END WHILE */
+  char d[] = "Hello world\n";
+  char c;
 
-    /* USER CODE BEGIN 3 */
+  uart6_start_receive_char_it();
+
+  while (1) {
+	  receive_button_state();
+	  if (get_press()) {
+		  switch_mode();
+	  }
+	  if(interrupt_enable==0){
+	      receive_input();
+	        if (input_received()) {
+	           process_input();
+	        }
+	     } else{
+	      if(uart6_try_get_receive_char((uint8_t *) &current_char ) )
+	    	  uart6_start_receive_char_it();
+	       if (input_received()) {
+	         process_input();
+	       }
+	        }
+	  current_char = '\0';
+
+/* USER CODE END WHILE */
+
+/* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -356,78 +389,6 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-}
-
-/**
-  * @brief USART6 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USART6_UART_Init(void)
-{
-
-  /* USER CODE BEGIN USART6_Init 0 */
-
-  /* USER CODE END USART6_Init 0 */
-
-  /* USER CODE BEGIN USART6_Init 1 */
-
-  /* USER CODE END USART6_Init 1 */
-  huart6.Instance = USART6;
-  huart6.Init.BaudRate = 115200;
-  huart6.Init.WordLength = UART_WORDLENGTH_8B;
-  huart6.Init.StopBits = UART_STOPBITS_1;
-  huart6.Init.Parity = UART_PARITY_NONE;
-  huart6.Init.Mode = UART_MODE_TX_RX;
-  huart6.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart6.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart6) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART6_Init 2 */
-
-  /* USER CODE END USART6_Init 2 */
-
-}
-
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
-
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PC15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PD13 PD14 PD15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
