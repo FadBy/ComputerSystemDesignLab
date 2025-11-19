@@ -23,6 +23,14 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include "uart_interface.h"
+#include "melody.h"
+#include "melodies_data.h"
+#include "audio_interface.h"
 
 /* USER CODE END Includes */
 
@@ -55,7 +63,159 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define MAX_INPUT_LENGTH 512
+#define MAX_MELODIES 4
 
+// Глобальные переменные для мелодий
+static Melody* standard_melodies[MAX_MELODIES] = {NULL};
+static Melody* user_melody = NULL;
+
+// Парсинг пользовательской мелодии из строки формата "440:500:100,880:250:50"
+static Melody* parse_user_melody_string(const char* input) {
+    if (!input || strlen(input) == 0) {
+        return NULL;
+    }
+
+    // Подсчитываем количество нот (по количеству запятых + 1)
+    size_t note_count = 1;
+    for (const char* p = input; *p; p++) {
+        if (*p == ',') {
+            note_count++;
+        }
+    }
+
+    // Создаем мелодию с названием "User melody"
+    Melody* melody = melody_create(note_count, "User melody");
+    if (!melody) {
+        return NULL;
+    }
+
+    // Парсим строку
+    char* input_copy = strdup(input);
+    if (!input_copy) {
+        melody_free(melody);
+        return NULL;
+    }
+
+    char* token = strtok(input_copy, ",");
+    size_t index = 0;
+
+    while (token && index < note_count) {
+        // Парсим формат "frequency:duration:pause"
+        uint32_t frequency = 0, duration = 0, pause = 0;
+
+        if (sscanf(token, "%u:%u:%u", &frequency, &duration, &pause) >= 2) {
+            melody->notes[index].frequency = frequency;
+            melody->notes[index].duration = duration;
+            melody->notes[index].pause = pause;
+            index++;
+        }
+
+        token = strtok(NULL, ",");
+    }
+
+    melody->count = index;
+    free(input_copy);
+
+    return melody;
+}
+
+// Загрузка стандартных мелодий
+static void load_standard_melodies(void) {
+    // Загружаем все захардкоженные мелодии
+    standard_melodies[0] = get_happy_birthday();
+    standard_melodies[1] = get_jingle_bells();
+    standard_melodies[2] = get_elochka();
+    standard_melodies[3] = get_imperial_march();
+}
+
+// Callback для завершения воспроизведения мелодии
+static void melody_completion_callback(void* user_data) {
+    const char* message = (const char*)user_data;
+    if (message) {
+        uart_send(message);
+        uart_send("\r\n");
+    }
+}
+
+// Воспроизведение мелодии с сообщением
+static void play_melody_with_message(Melody* melody) {
+    // Используем имя мелодии, если оно есть
+    if (melody && melody->name) {
+        uart_send("Playing: ");
+        uart_send(melody->name);
+        uart_send("\r\n");
+    } else {
+        uart_send("Playing melody\r\n");
+    }
+
+    // Запускаем мелодию асинхронно, callback вызовется когда мелодия завершится
+    play_melody(melody, melody_completion_callback, (void*)"Playback finished");
+}
+
+// Обработка меню настройки
+static void handle_setup_menu(void) {
+    uart_send("=== Setup Menu ===\r\n");
+    uart_send("Enter melody in format: frequency:duration:pause,frequency:duration:pause\r\n");
+    uart_send("Example: 440:500:100,880:250:50\r\n");
+    uart_send("Press Enter to finish input\r\n");
+
+    char input_buffer[MAX_INPUT_LENGTH] = {0};
+    size_t input_index = 0;
+
+    while (1) {
+        char c = uart_receive_char();
+
+        if (c == 0) {
+            // Нет данных, продолжаем ожидание
+            continue;
+        }
+
+        // Обработка Enter (завершение ввода)
+        if (c == '\n' || c == '\r') {
+            if (input_index > 0) {
+                input_buffer[input_index] = '\0';
+
+                // Парсим и сохраняем пользовательскую мелодию
+                if (user_melody) {
+                    melody_free(user_melody);
+                }
+
+                user_melody = parse_user_melody_string(input_buffer);
+
+                if (user_melody && user_melody->count > 0) {
+                    uart_send("User melody saved successfully! (");
+                    char count_str[32];
+                    sprintf(count_str, "%zu", user_melody->count);
+                    uart_send(count_str);
+                    uart_send(" notes)\r\n");
+                    uart_send("Press '5' to play it\r\n");
+                } else {
+                    uart_send("Error: Invalid melody format\r\n");
+                }
+
+                break;
+            } else {
+                uart_send("Input is empty, exiting setup menu\r\n");
+                break;
+            }
+        }
+        // Обработка обычных символов
+        else if (input_index < MAX_INPUT_LENGTH - 1) {
+            // Игнорируем служебные символы (управляющие символы)
+            if (c >= 32 && c <= 126) {  // Только печатные ASCII символы
+                input_buffer[input_index++] = c;
+                input_buffer[input_index] = '\0';
+                // Выводим только сам символ (эхо ввода)
+                char char_str[2] = {c, '\0'};
+                uart_send(char_str);
+            }
+        } else {
+            uart_send("Input buffer full\r\n");
+            break;
+        }
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -103,11 +263,75 @@ int main(void)
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2);
 
+  // Инициализация UART
+  uart_init();
+
+  // Инициализация аудио интерфейса
+  audio_init();
+
+  uart_send("=== Musical Box ===\r\n");
+  uart_send("Commands:\r\n");
+  uart_send("  '1' - Play Happy Birthday\r\n");
+  uart_send("  '2' - Play Jingle Bells\r\n");
+  uart_send("  '3' - Play V lesu rodilas elochka\r\n");
+  uart_send("  '4' - Play Imperial March\r\n");
+  uart_send("  '5' - Play user melody\r\n");
+  uart_send("  Enter - Setup menu\r\n");
+  uart_send("Ready!\r\n");
+
+  // Загрузка стандартных мелодий
+  load_standard_melodies();
+
   while (1)
   {
 
     /* USER CODE END WHILE */
 
+	  char c = uart_receive_char();
+
+	  if (c == 0) {
+		  // Нет данных
+		  continue;
+	  }
+
+	  // Проверяем, не играет ли сейчас мелодия
+	  if (audio_is_playing()) {
+		  continue;
+	  }
+
+	  // Обработка команд
+	  if (c >= '1' && c <= '4') {
+		  int melody_index = c - '1';
+
+		  if (melody_index >= 0 && melody_index < MAX_MELODIES && standard_melodies[melody_index]) {
+			  play_melody_with_message(standard_melodies[melody_index]);
+		  } else {
+			  char msg[64];
+			  sprintf(msg, "Melody %d not available", melody_index + 1);
+			  uart_send(msg);
+			  uart_send("\r\n");
+		  }
+	  }
+	  else if (c == '5') {
+		  // Воспроизведение пользовательской мелодии
+		  if (user_melody) {
+			  play_melody_with_message(user_melody);
+		  } else {
+			  uart_send("No user melody loaded. Use Enter to enter setup menu.\r\n");
+		  }
+	  }
+	  else if (c == '\n' || c == '\r') {
+		  // Вход в меню настройки (только если не играет мелодия)
+		  if (audio_is_playing()) {
+			  uart_send("Cannot enter setup menu while melody is playing\r\n");
+		  } else {
+			  handle_setup_menu();
+		  }
+	  }
+	  else {
+		  // Игнорируем неизвестные команды (не выводим сообщение)
+		  // Это могут быть служебные символы или символы, которые не нужно обрабатывать
+	  }
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
