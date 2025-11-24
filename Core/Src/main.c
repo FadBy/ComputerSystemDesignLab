@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "tim.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -27,11 +28,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "uart_interface.h"
+#include "usart.h"
 #include "melody.h"
 #include "melodies_data.h"
-#include "audio_interface.h"
-
+extern TIM_HandleTypeDef htim6;
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,7 +69,20 @@ void SystemClock_Config(void);
 // Глобальные переменные для мелодий
 static Melody* standard_melodies[MAX_MELODIES] = {NULL};
 static Melody* user_melody = NULL;
+void print_char(char c) {
+	HAL_UART_Transmit(&huart6, (uint8_t *) &c, 1, 10);
+}
 
+void print_result(int r) {
+    char s[20];
+    int len = sprintf(s, "%d", r);
+    print_string(s, len);
+}
+
+void print_string(char* s) {
+	int len = strlen(s);
+    HAL_UART_Transmit(&huart6, (uint8_t *)s, len, 10);
+}
 // Парсинг пользовательской мелодии из строки формата "440:500:100,880:250:50"
 static Melody* parse_user_melody_string(const char* input) {
     if (!input || strlen(input) == 0) {
@@ -133,38 +146,88 @@ static void load_standard_melodies(void) {
 static void melody_completion_callback(void* user_data) {
     const char* message = (const char*)user_data;
     if (message) {
-        uart_send(message);
-        uart_send("\r\n");
+        print_string(message);
+        print_string("\r\n");
     }
 }
+int duration = 0;
+int melody_pause = 0;
+int i=0;
+int melody_playing =0;
+Melody* melody = NULL;
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef * htim) {
+	if (htim->Instance == TIM6) {
+        print_string("f");
+		if (!melody_playing) {
+            return;
+        }
+		char str[1];
+		//print_string(sprintf(str, "%d",melody->notes[i].frequency));
 
+		if (melody_pause > 0) melody_pause--;
+		if (melody_pause == 0) {
+			print_string("r");
+			if (melody->notes[i].frequency == 0) {
+				// Выключаем звук
+				htim1.Instance->CCR1 = 0; // 0%
+				duration +=1;
+				print_string("m");
+			} else {
+				// Проигрываем ноты
+				duration +=1;
+				int g= melody->notes[i].frequency;
+				print_string(g);
+				htim1.Instance->ARR = melody->notes[i].frequency;
+     			htim1.Instance->CCR1 = 50; // 50% громкость (100%) - скважность
+			}
+			if(duration==melody->notes[i].duration){
+				duration=0;
+				melody_pause = melody->notes[i].pause;
+			}
+			print_string("i");
+			if (i == melody->count){
+                i = 0;
+                //duration = 1;
+                melody_playing= 0;
+                // Выключаем звук
+                htim1.Instance->CCR1 = 0; // 0%
+            }
+			print_char('\0');
+		}
+	}
+}
 // Воспроизведение мелодии с сообщением
-static void play_melody_with_message(Melody* melody) {
+static void play_melody_with_message() {
     // Используем имя мелодии, если оно есть
-    if (melody && melody->name) {
-        uart_send("Playing: ");
-        uart_send(melody->name);
-        uart_send("\r\n");
-    } else {
-        uart_send("Playing melody\r\n");
-    }
 
+    print_string("Playing melody\r\n");
+
+    i=0;
+    duration = 0;
+    melody_playing=1;
+    melody_pause = 0;
+    print_string("b");
     // Запускаем мелодию асинхронно, callback вызовется когда мелодия завершится
-    play_melody(melody, melody_completion_callback, (void*)"Playback finished");
+    //play_melody(melody, melody_completion_callback, (void*)"Playback finished");
 }
-
+char receive_input(void) {
+    char c;
+    HAL_UART_Receive(&huart6, (uint8_t*)&c, 1, HAL_MAX_DELAY);
+    return c;
+}
 // Обработка меню настройки
 static void handle_setup_menu(void) {
-    uart_send("=== Setup Menu ===\r\n");
-    uart_send("Enter melody in format: frequency:duration:pause,frequency:duration:pause\r\n");
-    uart_send("Example: 440:500:100,880:250:50\r\n");
-    uart_send("Press Enter to finish input\r\n");
+	print_string("=== Setup Menu ===\r\n");
+	print_string("Enter melody in format: frequency:duration:pause,frequency:duration:pause\r\n");
+	print_string("Example: 440:500:100,880:250:50\r\n");
+	print_string("Press Enter to finish input\r\n");
 
     char input_buffer[MAX_INPUT_LENGTH] = {0};
     size_t input_index = 0;
 
     while (1) {
-        char c = uart_receive_char();
+    	char c=receive_input();
+
 
         if (c == 0) {
             // Нет данных, продолжаем ожидание
@@ -184,19 +247,19 @@ static void handle_setup_menu(void) {
                 user_melody = parse_user_melody_string(input_buffer);
 
                 if (user_melody && user_melody->count > 0) {
-                    uart_send("User melody saved successfully! (");
+                    print_string("User melody saved successfully! (");
                     char count_str[32];
                     sprintf(count_str, "%zu", user_melody->count);
-                    uart_send(count_str);
-                    uart_send(" notes)\r\n");
-                    uart_send("Press '5' to play it\r\n");
+                    print_string(count_str);
+                    print_string(" notes)\r\n");
+                    print_string("Press '5' to play it\r\n");
                 } else {
-                    uart_send("Error: Invalid melody format\r\n");
+                    print_string("Error: Invalid melody format\r\n");
                 }
 
                 break;
             } else {
-                uart_send("Input is empty, exiting setup menu\r\n");
+                print_string("Input is empty, exiting setup menu\r\n");
                 break;
             }
         }
@@ -208,14 +271,15 @@ static void handle_setup_menu(void) {
                 input_buffer[input_index] = '\0';
                 // Выводим только сам символ (эхо ввода)
                 char char_str[2] = {c, '\0'};
-                uart_send(char_str);
+                print_string(char_str);
             }
         } else {
-            uart_send("Input buffer full\r\n");
+            print_string("Input buffer full\r\n");
             break;
         }
     }
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -247,9 +311,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_TIM1_Init();
+  MX_USART6_UART_Init();
   MX_TIM6_Init();
-  MX_TIM4_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -261,23 +325,18 @@ int main(void)
 
   HAL_TIM_Base_Start_IT(&htim6);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_2);
 
-  // Инициализация UART
-  uart_init();
-
-  // Инициализация аудио интерфейса
+  // Инициализация
   audio_init();
-
-  uart_send("=== Musical Box ===\r\n");
-  uart_send("Commands:\r\n");
-  uart_send("  '1' - Play Happy Birthday\r\n");
-  uart_send("  '2' - Play Jingle Bells\r\n");
-  uart_send("  '3' - Play V lesu rodilas elochka\r\n");
-  uart_send("  '4' - Play Imperial March\r\n");
-  uart_send("  '5' - Play user melody\r\n");
-  uart_send("  Enter - Setup menu\r\n");
-  uart_send("Ready!\r\n");
+  print_string("=== Musical Box ===\r\n");
+  print_string("Commands:\r\n");
+  print_string("  '1' - Play Happy Birthday\r\n");
+  print_string("  '2' - Play Jingle Bells\r\n");
+  print_string("  '3' - Play V lesu rodilas elochka\r\n");
+  print_string("  '4' - Play Imperial March\r\n");
+  print_string("  '5' - Play user melody\r\n");
+  print_string("  Enter - Setup menu\r\n");
+  print_string("Ready!\r\n");
 
   // Загрузка стандартных мелодий
   load_standard_melodies();
@@ -287,52 +346,54 @@ int main(void)
 
     /* USER CODE END WHILE */
 
-	  char c = uart_receive_char();
-
-	  if (c == 0) {
-		  // Нет данных
-		  continue;
-	  }
-
-	  // Проверяем, не играет ли сейчас мелодия
-	  if (audio_is_playing()) {
-		  continue;
-	  }
-
-	  // Обработка команд
-	  if (c >= '1' && c <= '4') {
-		  int melody_index = c - '1';
-
-		  if (melody_index >= 0 && melody_index < MAX_MELODIES && standard_melodies[melody_index]) {
-			  play_melody_with_message(standard_melodies[melody_index]);
-		  } else {
-			  char msg[64];
-			  sprintf(msg, "Melody %d not available", melody_index + 1);
-			  uart_send(msg);
-			  uart_send("\r\n");
-		  }
-	  }
-	  else if (c == '5') {
-		  // Воспроизведение пользовательской мелодии
-		  if (user_melody) {
-			  play_melody_with_message(user_melody);
-		  } else {
-			  uart_send("No user melody loaded. Use Enter to enter setup menu.\r\n");
-		  }
-	  }
-	  else if (c == '\n' || c == '\r') {
-		  // Вход в меню настройки (только если не играет мелодия)
-		  if (audio_is_playing()) {
-			  uart_send("Cannot enter setup menu while melody is playing\r\n");
-		  } else {
-			  handle_setup_menu();
-		  }
-	  }
-	  else {
-		  // Игнорируем неизвестные команды (не выводим сообщение)
-		  // Это могут быть служебные символы или символы, которые не нужно обрабатывать
-	  }
     /* USER CODE BEGIN 3 */
+	  char c = receive_input();
+
+	  	  if (c == 0) {
+	  		  // Нет данных
+	  		  continue;
+	  	  }
+
+	  	  // Проверяем, не играет ли сейчас мелодия
+	  	  if (melody_playing) {
+	  		  continue;
+	  	  }
+
+	  	  // Обработка команд
+	  	  if (c >= '1' && c <= '4') {
+	  		  int melody_index = c - '1';
+
+	  		  if (melody_index >= 0 && melody_index < MAX_MELODIES && standard_melodies[melody_index]) {
+	  			  melody = &standard_melodies[melody_index];
+	  			  play_melody_with_message();
+	  		  } else {
+	  			  char msg[64];
+	  			  sprintf(msg, "Melody %d not available", melody_index + 1);
+	  			  print_string(msg);
+	  			  print_string("\r\n");
+	  		  }
+	  	  }
+	  	  else if (c == '5') {
+	  		  // Воспроизведение пользовательской мелодии
+	  		  if (user_melody) {
+	  			  melody= &user_melody;
+	  			  play_melody_with_message();
+	  		  } else {
+	  			  print_string("No user melody loaded. Use Enter to enter setup menu.\r\n");
+	  		  }
+	  	  }
+	  	  else if (c == '\n' || c == '\r') {
+	  		  // Вход в меню настройки (только если не играет мелодия)
+	  		  if (audio_is_playing()) {
+	  			  print_string("Cannot enter setup menu while melody is playing\r\n");
+	  		  } else {
+	  			  handle_setup_menu();
+	  		  }
+	  	  }
+	  	  else {
+	  		  // Игнорируем неизвестные команды (не выводим сообщение)
+	  		  // Это могут быть служебные символы или символы, которые не нужно обрабатывать
+	  	  }
   }
   /* USER CODE END 3 */
 }

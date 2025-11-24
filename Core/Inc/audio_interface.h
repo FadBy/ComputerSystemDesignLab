@@ -31,4 +31,3 @@ void audio_stop(void);
 int audio_is_playing(void);
 
 #endif // AUDIO_INTERFACE_H
-

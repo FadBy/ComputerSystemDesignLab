@@ -1,5 +1,4 @@
 #include "melody.h"
-#include "audio_interface.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,7 +27,7 @@ static void melody_note_callback(void* user_data) {
         // Если есть еще ноты, воспроизводим следующую
         if (state->current_note_index < state->melody->count) {
             Note* next_note = &state->melody->notes[state->current_note_index];
-            audio_start_note(next_note->frequency, next_note->duration, melody_note_callback, state);
+            //audio_start_note(next_note->frequency, next_note->duration, melody_note_callback, state);
         } else {
             // Мелодия завершена
             if (state->completion_callback) {
@@ -47,7 +46,7 @@ static void melody_note_callback(void* user_data) {
         // Если есть пауза после этой ноты, запускаем её
         if (current_note->pause > 0) {
             state->is_in_pause = 1;
-            audio_start_pause(current_note->pause, melody_note_callback, state);
+            //audio_start_pause(current_note->pause, melody_note_callback, state);
             return;
         }
     }
