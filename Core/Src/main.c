@@ -66,23 +66,20 @@ void SystemClock_Config(void);
 #define MAX_INPUT_LENGTH 512
 #define MAX_MELODIES 4
 
-// Глобальные переменные для мелодий
-static Melody* standard_melodies[MAX_MELODIES] = {NULL};
-static Melody* user_melody = NULL;
+
 void print_char(char c) {
 	HAL_UART_Transmit(&huart6, (uint8_t *) &c, 1, 10);
 }
 
-void print_result(int r) {
-    char s[20];
-    int len = sprintf(s, "%d", r);
-    print_string(s, len);
-}
-
 void print_string(char* s) {
 	int len = strlen(s);
-    HAL_UART_Transmit(&huart6, (uint8_t *)s, len, 10);
+	HAL_UART_Transmit(&huart6, (uint8_t *)s, len, 10);
+
 }
+// Глобальные переменные для мелодий
+static Melody* standard_melodies[MAX_MELODIES] = {NULL};
+static Melody* user_melody = NULL;
+
 // Парсинг пользовательской мелодии из строки формата "440:500:100,880:250:50"
 static Melody* parse_user_melody_string(const char* input) {
     if (!input || strlen(input) == 0) {
@@ -157,34 +154,49 @@ int melody_playing =0;
 Melody* melody = NULL;
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef * htim) {
 	if (htim->Instance == TIM6) {
-        print_string("f");
+		char freq_str[12];
+
+		/*int freq = melody->notes[0].frequency;
+						htim1.Instance->ARR = 90000000 / ((freq) * htim1.Instance->PSC) - 1;
+						     			htim1.Instance->CCR1 = htim1.Instance->ARR >> 1;
+						     			sprintf(freq_str, "%lu", freq);
+						     			     			print_string(freq_str);
+						     			return;*/
+        //print_string("f");
 		if (!melody_playing) {
             return;
         }
+
 		char str[1];
 		//print_string(sprintf(str, "%d",melody->notes[i].frequency));
 
-		if (melody_pause > 0) melody_pause--;
-		if (melody_pause == 0) {
-			print_string("r");
+		if (melody_pause > 0){
+			melody_pause--;
+		}else if(melody_pause == 0) {
+			//print_string("r");
 			if (melody->notes[i].frequency == 0) {
 				// Выключаем звук
 				htim1.Instance->CCR1 = 0; // 0%
 				duration +=1;
-				print_string("m");
+				//print_string("m");
 			} else {
 				// Проигрываем ноты
 				duration +=1;
-				int g= melody->notes[i].frequency;
-				print_string(g);
-				htim1.Instance->ARR = melody->notes[i].frequency;
-     			htim1.Instance->CCR1 = 50; // 50% громкость (100%) - скважность
+				//int g= ;
+
+
+				htim1.Instance->ARR = 90000000 / ((melody->notes[i].frequency) * htim1.Instance->PSC) - 1;
+     			htim1.Instance->CCR1 = htim1.Instance->ARR >> 1;
+     			//sprintf(freq_str, "%lu", htim1.Instance->ARR >> 1);
+     			//print_string(freq_str);
 			}
 			if(duration==melody->notes[i].duration){
 				duration=0;
+				i++;
+				htim1.Instance->CCR1 = 0;
 				melody_pause = melody->notes[i].pause;
 			}
-			print_string("i");
+			//print_string("i");
 			if (i == melody->count){
                 i = 0;
                 //duration = 1;
@@ -224,10 +236,9 @@ static void handle_setup_menu(void) {
 
     char input_buffer[MAX_INPUT_LENGTH] = {0};
     size_t input_index = 0;
-
     while (1) {
-    	char c=receive_input();
 
+    	char c=receive_input();
 
         if (c == 0) {
             // Нет данных, продолжаем ожидание
@@ -239,7 +250,6 @@ static void handle_setup_menu(void) {
             if (input_index > 0) {
                 input_buffer[input_index] = '\0';
 
-                // Парсим и сохраняем пользовательскую мелодию
                 if (user_melody) {
                     melody_free(user_melody);
                 }
@@ -263,13 +273,10 @@ static void handle_setup_menu(void) {
                 break;
             }
         }
-        // Обработка обычных символов
         else if (input_index < MAX_INPUT_LENGTH - 1) {
-            // Игнорируем служебные символы (управляющие символы)
-            if (c >= 32 && c <= 126) {  // Только печатные ASCII символы
+            if (c >= 32 && c <= 126) {
                 input_buffer[input_index++] = c;
                 input_buffer[input_index] = '\0';
-                // Выводим только сам символ (эхо ввода)
                 char char_str[2] = {c, '\0'};
                 print_string(char_str);
             }
@@ -323,11 +330,8 @@ int main(void)
 //  HAL_TIM_Base_Start_IT(&htim1);
 //  HAL_TIM_Base_Start_IT(&htim6);
 
-  HAL_TIM_Base_Start_IT(&htim6);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-  // Инициализация
-  audio_init();
+
   print_string("=== Musical Box ===\r\n");
   print_string("Commands:\r\n");
   print_string("  '1' - Play Happy Birthday\r\n");
@@ -338,17 +342,19 @@ int main(void)
   print_string("  Enter - Setup menu\r\n");
   print_string("Ready!\r\n");
 
-  // Загрузка стандартных мелодий
   load_standard_melodies();
 
+  melody = standard_melodies[0];
+
+  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   while (1)
   {
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  char c = receive_input();
-
+	  	  char c= receive_input();
 	  	  if (c == 0) {
 	  		  // Нет данных
 	  		  continue;
@@ -364,7 +370,7 @@ int main(void)
 	  		  int melody_index = c - '1';
 
 	  		  if (melody_index >= 0 && melody_index < MAX_MELODIES && standard_melodies[melody_index]) {
-	  			  melody = &standard_melodies[melody_index];
+	  			  melody = standard_melodies[melody_index];
 	  			  play_melody_with_message();
 	  		  } else {
 	  			  char msg[64];
@@ -376,7 +382,7 @@ int main(void)
 	  	  else if (c == '5') {
 	  		  // Воспроизведение пользовательской мелодии
 	  		  if (user_melody) {
-	  			  melody= &user_melody;
+	  			  melody= user_melody;
 	  			  play_melody_with_message();
 	  		  } else {
 	  			  print_string("No user melody loaded. Use Enter to enter setup menu.\r\n");
@@ -384,7 +390,7 @@ int main(void)
 	  	  }
 	  	  else if (c == '\n' || c == '\r') {
 	  		  // Вход в меню настройки (только если не играет мелодия)
-	  		  if (audio_is_playing()) {
+	  		  if (melody_playing) {
 	  			  print_string("Cannot enter setup menu while melody is playing\r\n");
 	  		  } else {
 	  			  handle_setup_menu();
@@ -394,6 +400,7 @@ int main(void)
 	  		  // Игнорируем неизвестные команды (не выводим сообщение)
 	  		  // Это могут быть служебные символы или символы, которые не нужно обрабатывать
 	  	  }
+
   }
   /* USER CODE END 3 */
 }

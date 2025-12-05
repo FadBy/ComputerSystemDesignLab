@@ -23,10 +23,5 @@ typedef struct {
 Melody* melody_create(size_t count, const char* name);
 void melody_free(Melody* melody);
 
-// Воспроизведение мелодии (асинхронное)
-// completion_callback вызывается когда мелодия завершена (может быть NULL)
-// completion_user_data передается в completion_callback (может быть NULL)
-void play_melody(Melody* melody, void (*completion_callback)(void*), void* completion_user_data);
-
 #endif // MELODY_H
 
