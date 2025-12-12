@@ -65,6 +65,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 #define MAX_INPUT_LENGTH 512
 #define MAX_MELODIES 4
+#define MAX_USER_NOTES 256
 
 // I2C keypad (SDK-1.1) parameters
 #define KB_I2C_ADDRESS        (0xE2)          // 8-bit address
