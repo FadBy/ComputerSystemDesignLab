@@ -1,9 +1,7 @@
 #include "melodies_data.h"
 #include "melody.h"
-#include <stdlib.h>
 #include <string.h>
 
-// Happy Birthday
 static const Note happy_birthday_notes[] = {
     {262, 100, 50}, {262, 100, 50}, {294, 400, 50}, {262, 400, 50}, {349, 400, 50}, {330, 800, 100},
     {262, 200, 50}, {262, 100, 50}, {294, 400, 50}, {262, 400, 50}, {392, 400, 50}, {349, 800, 100},
@@ -18,7 +16,6 @@ Melody* get_happy_birthday(void) {
     return m;
 }
 
-// Jingle Bells
 static const Note jingle_bells_notes[] = {
     {523, 250, 50}, {523, 250, 50}, {523, 500, 50},
     {523, 250, 50}, {523, 250, 50}, {523, 500, 50},
@@ -35,7 +32,6 @@ Melody* get_jingle_bells(void) {
     return m;
 }
 
-// В лесу родилась ёлочка
 static const Note elochka_notes[] = {
     {330, 300, 50}, {349, 300, 50}, {392, 600, 50},
     {392, 300, 50}, {440, 300, 50}, {494, 600, 50},
@@ -55,7 +51,6 @@ Melody* get_elochka(void) {
     return m;
 }
 
-// Imperial March (Theme of Darth Vader)
 static const Note imperial_march_notes[] = {
     {440, 500, 50}, {440, 500, 50}, {440, 500, 50},
     {349, 350, 50}, {523, 150, 50},
