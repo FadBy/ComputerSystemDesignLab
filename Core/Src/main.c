@@ -67,8 +67,7 @@ void SystemClock_Config(void);
 #define MAX_MELODIES 4
 #define MAX_USER_NOTES 256
 
-// I2C keypad (SDK-1.1) parameters
-#define KB_I2C_ADDRESS        (0xE2)          // 8-bit address
+#define KB_I2C_ADDRESS        (0xE2)
 #define KB_I2C_READ_ADDRESS   (KB_I2C_ADDRESS | 1)
 #define KB_I2C_WRITE_ADDRESS  (KB_I2C_ADDRESS & ~1)
 #define KB_INPUT_REG          (0x0)
@@ -89,7 +88,6 @@ void print_string(char* s) {
 static Melody* standard_melodies[MAX_MELODIES] = {NULL};
 static Melody* user_melody = NULL;
 
-// Keyboard state
 static uint32_t kb_last_press_ms = 0;
 static int kb_last_index = -1;
 static uint8_t kb_row_hits[4] = {0};
@@ -98,7 +96,6 @@ static uint32_t mode_btn_last_ms = 0;
 static uint8_t mode_btn_last = 1;
 static uint8_t keyboard_test_mode = 0;
 
-// Key mapping: indices 1..12 -> chars used by app
 static const char kb_map_music[12] = {
 	'1','2','3',
 	'4','5','6',
@@ -106,7 +103,6 @@ static const char kb_map_music[12] = {
 	':','0','\r'
 };
 
-// Scan matrix via I2C expander; return key index 1..12 or -1 if none/invalid
 static int kb_scan_index(void) {
 	const uint32_t now = HAL_GetTick();
 	if (now - kb_last_press_ms < KB_KEY_DEBOUNCE_MS) {
@@ -127,17 +123,17 @@ static int kb_scan_index(void) {
 		if (HAL_I2C_Mem_Write(&hi2c1, KB_I2C_WRITE_ADDRESS, KB_CONFIG_REG, 1, &cfg, 1, KB_I2C_TIMEOUT) != HAL_OK) {
 			continue;
 		}
-		HAL_Delay(1); // settle
+		HAL_Delay(1);
 		if (HAL_I2C_Mem_Read(&hi2c1, KB_I2C_READ_ADDRESS, KB_INPUT_REG, 1, &reg_buffer, 1, KB_I2C_TIMEOUT) != HAL_OK) {
 			continue;
 		}
 
-		uint8_t col_code = reg_buffer >> 4; // upper 4 bits are columns
+		uint8_t col_code = reg_buffer >> 4;
 		int col = -1;
 		switch (col_code) {
-			case 6: col = 0; break; // 0b0110
-			case 5: col = 1; break; // 0b0101
-			case 3: col = 2; break; // 0b0011
+			case 6: col = 0; break;
+			case 5: col = 1; break;
+			case 3: col = 2; break;
 			default: col = -1; break;
 		}
 
@@ -146,7 +142,7 @@ static int kb_scan_index(void) {
 			kb_row_hits[row]++;
 			kb_col_hits[col]++;
 			if (found == 1) {
-				detected_index = row * 3 + col + 1; // 1..12
+				detected_index = row * 3 + col + 1;
 			}
 		}
 	}
@@ -156,7 +152,6 @@ static int kb_scan_index(void) {
 	memset(kb_row_hits, 0, sizeof(kb_row_hits));
 	memset(kb_col_hits, 0, sizeof(kb_col_hits));
 
-	// Если ни одной валидной клавиши — сбросить last и выйти
 	if (found == 0) {
 		kb_last_index = -1;
 		return -1;
@@ -164,11 +159,11 @@ static int kb_scan_index(void) {
 
 	if (found != 1 || row_sum != 1 || col_sum != 1) {
 		kb_last_index = -1;
-		return -1; // multi-press or no key
+		return -1;
 	}
 
 	if (detected_index == kb_last_index) {
-		return -1; // held key, ignore repeat
+		return -1;
 	}
 
 	kb_last_index = detected_index;
@@ -192,7 +187,7 @@ static void handle_mode_button(void) {
 	if (state != mode_btn_last && (now - mode_btn_last_ms) > 50U) {
 		mode_btn_last = state;
 		mode_btn_last_ms = now;
-		if (state == GPIO_PIN_RESET) { // release (active-low)
+		if (state == GPIO_PIN_RESET) {
 			keyboard_test_mode = !keyboard_test_mode;
 			if (keyboard_test_mode) {
 				print_string("Keyboard test mode ON\r\n");
@@ -297,13 +292,11 @@ static void play_melody_with_message() {
     melody_pause = 0;
 }
 char receive_input(void) {
-    // 1) keypad first
     char key = kb_poll_char();
     if (key) {
     	return key;
     }
 
-    // 2) UART (non-blocking)
     char c;
     HAL_StatusTypeDef status = HAL_UART_Receive(&huart6, (uint8_t*)&c, 1, 50);
     if (status == HAL_OK) {
@@ -331,21 +324,18 @@ static void handle_setup_menu(void) {
 		if (c == '\n' || c == '\r') {
 			if (note_len == 0) {
 				if (last_enter) {
-					// finish input
 					break;
 				} else {
 					last_enter = 1;
-					print_string("\r\n"); // echo empty line
+					print_string("\r\n");
 					continue;
 				}
 			}
-			// parse current note
 			note_buf[note_len] = '\0';
 			uint32_t f=0,d=0,p=0;
 			int scanned = sscanf(note_buf, "%lu:%lu:%lu", &f, &d, &p);
 			if (scanned < 2) {
 				print_string("\r\nError: note format must be freq:dur[:pause]\r\n");
-				// reset current buffer
 				note_len = 0;
 				memset(note_buf, 0, sizeof(note_buf));
 				last_enter = 0;
@@ -365,7 +355,6 @@ static void handle_setup_menu(void) {
 
 			print_string("\r\nNote added\r\n");
 
-			// reset for next note
 			note_len = 0;
 			memset(note_buf, 0, sizeof(note_buf));
 			last_enter = 0;
@@ -387,7 +376,6 @@ static void handle_setup_menu(void) {
 		}
 	}
 
-	// build melody
 	if (note_count == 0) {
 		print_string("Input is empty, exiting setup menu\r\n");
 		return;
@@ -489,7 +477,6 @@ int main(void)
 		continue;
 	}
 
-	// Проверяем, не играет ли сейчас мелодия
 	if (melody_playing) {
 		continue;
 	}
